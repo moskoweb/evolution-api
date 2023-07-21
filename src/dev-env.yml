@@ -35,7 +35,7 @@ LOG:
     - DEBUG
     - INFO
     - LOG
-    - VERBOSE
+    # - VERBOSE
     - DARK
     - WEBHOOKS
   COLOR: true
@@ -44,7 +44,7 @@ LOG:
 # Determine how long the instance should be deleted from memory in case of no connection.
 # Default time: 5 minutes
 # If you don't even want an expiration, enter the value false
-DEL_INSTANCE: false # or false
+DEL_INSTANCE: true # or false
 
 # Temporary data storage
 STORE:
@@ -54,7 +54,7 @@ STORE:
   CHATS: true
 
 CLEAN_STORE:
-  CLEANING_INTERVAL: 7200 # 7200 seconds === 2h
+  CLEANING_INTERVAL: false # 7200 seconds === 2h
   MESSAGES: true
   MESSAGE_UP: true
   CONTACTS: true
@@ -68,11 +68,11 @@ DATABASE:
     DB_PREFIX_NAME: evolution
   # Choose the data you want to save in the application's database or store
   SAVE_DATA:
-    INSTANCE: false
-    NEW_MESSAGE: false
-    MESSAGE_UPDATE: false
-    CONTACTS: false
-    CHATS: false
+    INSTANCE: true
+    NEW_MESSAGE: true
+    MESSAGE_UPDATE: true
+    CONTACTS: true
+    CHATS: true
 
 REDIS:
   ENABLED: false
@@ -84,7 +84,7 @@ REDIS:
 WEBHOOK:
   # Define a global webhook that will listen for enabled events from all instances
   GLOBAL:
-    URL: <url>
+    URL: 
     ENABLED: false
     # With this option activated, you work with a url per webhook event, respecting the global url and the name of each event
     WEBHOOK_BY_EVENTS: false
