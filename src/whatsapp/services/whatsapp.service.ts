@@ -1481,7 +1481,7 @@ export class WAStartupService {
         return {
           wuid: jid,
           name: info?.name,
-          numberExists: info?.exists,
+          numberExists: info?.exists || false,
           picture: picture?.profilePictureUrl,
           status: status?.status,
           isBusiness: business.isBusiness,
