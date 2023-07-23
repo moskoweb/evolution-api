@@ -1553,6 +1553,9 @@ export class WAStartupService {
         await this.client.sendPresenceUpdate('paused', sender);
         this.logger.verbose('Sending presence update: paused');
       }
+      
+      // Link Preview
+      let linkPreview = (options?.linkPreview != false) ? undefined : false;
 
       let quoted: WAMessage;
 
@@ -1647,6 +1650,7 @@ export class WAStartupService {
             {
               text: message['conversation'],
               mentions,
+              linkPreview: linkPreview,
             } as unknown as AnyMessageContent,
             option as unknown as MiscMessageGenerationOptions,
           );
