@@ -1502,17 +1502,17 @@ export class WAStartupService {
 
   private createJid(number: string): string {
     this.logger.verbose('Creating jid with number: ' + number);
-
+    
     if (number.includes('@g.us') || number.includes('@s.whatsapp.net')) {
       this.logger.verbose('Number already contains @g.us or @s.whatsapp.net');
       return number;
     }
-
+  
     if (number.includes('@broadcast')) {
       this.logger.verbose('Number already contains @broadcast');
       return number;
     }
-
+    
     number = number
       ?.replace(/\s/g, '')
       .replace(/\+/g, '')
@@ -1520,18 +1520,25 @@ export class WAStartupService {
       .replace(/\)/g, '')
       .split(/\:/)[0]
       .split('@')[0];
-
-    if (number.includes('-') && number.length >= 24) {
+    
+    if(number.includes('-') && number.length >= 24){
       this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
       number = number.replace(/[^\d-]/g, '');
       return `${number}@g.us`;
     }
-
+    
     number = number.replace(/\D/g, '');
-
+    
+    if (number.length >= 18) {
+      this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
+      number = number.replace(/[^\d-]/g, '');
+      return `${number}@g.us`;
+    }
+    
     this.logger.verbose('Jid created is whatsapp: ' + `${number}@s.whatsapp.net`);
     return `${number}@s.whatsapp.net`;
   }
+
 
   public async profilePicture(number: string) {
     const jid = this.createJid(number);
@@ -1660,8 +1667,6 @@ export class WAStartupService {
       }
       
       // Link Preview
-      let linkPreview = (options?.linkPreview != false) ? undefined : false;
-
       const linkPreview = options?.linkPreview != false ? undefined : false;
 
       let quoted: WAMessage;
