@@ -84,8 +84,8 @@ import { arrayUnique, isBase64, isURL } from 'class-validator';
 import {
   ArchiveChatDto,
   DeleteMessage,
-  OnWhatsAppDto,
   NumberBusiness,
+  OnWhatsAppDto,
   PrivacySettingDto,
   ReadMessageDto,
   WhatsAppNumberDto,
@@ -125,6 +125,7 @@ import { Log } from '../../config/env.config';
 import ProxyAgent from 'proxy-agent';
 import { ChatwootService } from './chatwoot.service';
 import { waMonitor } from '../whatsapp.module';
+import { SettingsRaw } from '../models';
 
 export class WAStartupService {
   constructor(
@@ -143,12 +144,15 @@ export class WAStartupService {
   public client: WASocket;
   private readonly localWebhook: wa.LocalWebHook = {};
   private readonly localChatwoot: wa.LocalChatwoot = {};
+  private readonly localSettings: wa.LocalSettings = {};
   private stateConnection: wa.StateConnection = { state: 'close' };
   public readonly storePath = join(ROOT_DIR, 'store');
   private readonly msgRetryCounterCache: CacheStore = new NodeCache();
   private readonly userDevicesCache: CacheStore = new NodeCache();
   private endSession = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
+
+  private phoneNumber: string;
 
   private chatwootService = new ChatwootService(waMonitor, this.configService);
 
@@ -239,6 +243,12 @@ export class WAStartupService {
 
   public get qrCode(): wa.QrCode {
     this.logger.verbose('Getting qrcode');
+    if (this.instance.qrcode?.pairingCode) {
+      return {
+        pairingCode: this.instance.qrcode?.pairingCode,
+      };
+    }
+
     return {
       code: this.instance.qrcode?.code,
       base64: this.instance.qrcode?.base64,
@@ -338,6 +348,46 @@ export class WAStartupService {
     this.logger.verbose(`Chatwoot inbox name: ${data.name_inbox}`);
     this.logger.verbose(`Chatwoot sign msg: ${data.sign_msg}`);
 
+    return data;
+  }
+
+  private async loadSettings() {
+    this.logger.verbose('Loading settings');
+    const data = await this.repository.settings.find(this.instanceName);
+    this.localSettings.reject_call = data?.reject_call;
+    this.logger.verbose(`Settings reject_call: ${this.localSettings.reject_call}`);
+
+    this.localSettings.msg_call = data?.msg_call;
+    this.logger.verbose(`Settings msg_call: ${this.localSettings.msg_call}`);
+
+    this.localSettings.groups_ignore = data?.groups_ignore;
+    this.logger.verbose(`Settings groups_ignore: ${this.localSettings.groups_ignore}`);
+
+    this.logger.verbose('Settings loaded');
+  }
+
+  public async setSettings(data: SettingsRaw) {
+    this.logger.verbose('Setting settings');
+    await this.repository.settings.create(data, this.instanceName);
+    this.logger.verbose(`Settings reject_call: ${data.reject_call}`);
+    this.logger.verbose(`Settings msg_call: ${data.msg_call}`);
+    this.logger.verbose(`Settings groups_ignore: ${data.groups_ignore}`);
+    Object.assign(this.localSettings, data);
+    this.logger.verbose('Settings set');
+  }
+
+  public async findSettings() {
+    this.logger.verbose('Finding settings');
+    const data = await this.repository.settings.find(this.instanceName);
+
+    if (!data) {
+      this.logger.verbose('Settings not found');
+      throw new NotFoundException('Settings not found');
+    }
+
+    this.logger.verbose(`Settings url: ${data.reject_call}`);
+    this.logger.verbose(`Settings msg_call: ${data.msg_call}`);
+    this.logger.verbose(`Settings groups_ignore: ${data.groups_ignore}`);
     return data;
   }
 
@@ -556,6 +606,13 @@ export class WAStartupService {
         color: { light: '#ffffff', dark: '#198754' },
       };
 
+      if (this.phoneNumber) {
+        await delay(2000);
+        this.instance.qrcode.pairingCode = await this.client.requestPairingCode(
+          this.phoneNumber,
+        );
+      }
+
       this.logger.verbose('Generating QR code');
       qrcode.toDataURL(qr, optsQrcode, (error, base64) => {
         if (error) {
@@ -567,7 +624,12 @@ export class WAStartupService {
         this.instance.qrcode.code = qr;
 
         this.sendDataWebhook(Events.QRCODE_UPDATED, {
-          qrcode: { instance: this.instance.name, code: qr, base64 },
+          qrcode: {
+            instance: this.instance.name,
+            pairingCode: this.instance.qrcode.pairingCode,
+            code: qr,
+            base64,
+          },
         });
 
         if (this.localChatwoot.enabled) {
@@ -575,7 +637,12 @@ export class WAStartupService {
             Events.QRCODE_UPDATED,
             { instanceName: this.instance.name },
             {
-              qrcode: { instance: this.instance.name, code: qr, base64 },
+              qrcode: {
+                instance: this.instance.name,
+                pairingCode: this.instance.qrcode.pairingCode,
+                code: qr,
+                base64,
+              },
             },
           );
         }
@@ -584,7 +651,7 @@ export class WAStartupService {
       this.logger.verbose('Generating QR code in terminal');
       qrcodeTerminal.generate(qr, { small: true }, (qrcode) =>
         this.logger.log(
-          `\n{ instance: ${this.instance.name}, qrcodeCount: ${this.instance.qrcode.count} }\n` +
+          `\n{ instance: ${this.instance.name} pairingCode: ${this.instance.qrcode.pairingCode}, qrcodeCount: ${this.instance.qrcode.count} }\n` +
             qrcode,
         ),
       );
@@ -751,11 +818,12 @@ export class WAStartupService {
     return await useMultiFileAuthState(join(INSTANCE_DIR, this.instance.name));
   }
 
-  public async connectToWhatsapp(): Promise<WASocket> {
+  public async connectToWhatsapp(number?: string): Promise<WASocket> {
     this.logger.verbose('Connecting to whatsapp');
     try {
       this.loadWebhook();
       this.loadChatwoot();
+      this.loadSettings();
 
       this.instance.authState = await this.defineAuthState();
 
@@ -823,6 +891,15 @@ export class WAStartupService {
       this.eventHandler();
 
       this.logger.verbose('Socket event handler initialized');
+
+      this.phoneNumber = number;
+
+      // if (number) {
+      //   this.logger.verbose('creating pairing code');
+      //   await delay(5000);
+      //   this.phoneNumber = number;
+      //   this.instance.qrcode.pairingCode = await this.client.requestPairingCode(number);
+      // }
 
       return this.client;
     } catch (error) {
@@ -1038,13 +1115,14 @@ export class WAStartupService {
         type: MessageUpsertType;
       },
       database: Database,
+      settings: SettingsRaw,
     ) => {
       this.logger.verbose('Event received: messages.upsert');
       const received = messages[0];
 
       if (
         type !== 'notify' ||
-        received.message?.protocolMessage ||
+        // received.message?.protocolMessage ||
         received.message?.pollUpdateMessage
       ) {
         this.logger.verbose('message rejected');
@@ -1053,6 +1131,11 @@ export class WAStartupService {
 
       if (Long.isLong(received.messageTimestamp)) {
         received.messageTimestamp = received.messageTimestamp?.toNumber();
+      }
+
+      if (settings.groups_ignore && received.key.remoteJid.includes('@g.us')) {
+        this.logger.verbose('group ignored');
+        return;
       }
 
       const messageRaw: MessageRaw = {
@@ -1146,7 +1229,11 @@ export class WAStartupService {
       );
     },
 
-    'messages.update': async (args: WAMessageUpdate[], database: Database) => {
+    'messages.update': async (
+      args: WAMessageUpdate[],
+      database: Database,
+      settings: SettingsRaw,
+    ) => {
       this.logger.verbose('Event received: messages.update');
       const status: Record<number, wa.StatusMessage> = {
         0: 'ERROR',
@@ -1157,6 +1244,10 @@ export class WAStartupService {
         5: 'PLAYED',
       };
       for await (const { key, update } of args) {
+        if (settings.groups_ignore && key.remoteJid.includes('@g.us')) {
+          this.logger.verbose('group ignored');
+          return;
+        }
         if (key.remoteJid !== 'status@broadcast' && !key?.remoteJid?.match(/(:\d+)/)) {
           this.logger.verbose('Message update is valid');
 
@@ -1256,9 +1347,32 @@ export class WAStartupService {
 
   private eventHandler() {
     this.logger.verbose('Initializing event handler');
-    this.client.ev.process((events) => {
+    this.client.ev.process(async (events) => {
       if (!this.endSession) {
         const database = this.configService.get<Database>('DATABASE');
+        const settings = await this.findSettings();
+
+        if (events.call) {
+          this.logger.verbose('Listening event: call');
+          const call = events.call[0];
+
+          if (settings?.reject_call && call.status == 'offer') {
+            this.logger.verbose('Rejecting call');
+            this.client.rejectCall(call.id, call.from);
+          }
+
+          if (settings?.msg_call.trim().length > 0 && call.status == 'offer') {
+            this.logger.verbose('Sending message in call');
+            const msg = await this.client.sendMessage(call.from, {
+              text: settings.msg_call,
+            });
+
+            this.client.ev.emit('messages.upsert', {
+              messages: [msg],
+              type: 'notify',
+            });
+          }
+        }
 
         if (events['connection.update']) {
           this.logger.verbose('Listening event: connection.update');
@@ -1279,37 +1393,44 @@ export class WAStartupService {
         if (events['messages.upsert']) {
           this.logger.verbose('Listening event: messages.upsert');
           const payload = events['messages.upsert'];
-          this.messageHandle['messages.upsert'](payload, database);
+          this.messageHandle['messages.upsert'](payload, database, settings);
         }
 
         if (events['messages.update']) {
           this.logger.verbose('Listening event: messages.update');
           const payload = events['messages.update'];
-          this.messageHandle['messages.update'](payload, database);
+          this.messageHandle['messages.update'](payload, database, settings);
         }
 
         if (events['presence.update']) {
           this.logger.verbose('Listening event: presence.update');
           const payload = events['presence.update'];
+
+          if (settings.groups_ignore && payload.id.includes('@g.us')) {
+            this.logger.verbose('group ignored');
+            return;
+          }
           this.sendDataWebhook(Events.PRESENCE_UPDATE, payload);
         }
 
-        if (events['groups.upsert']) {
-          this.logger.verbose('Listening event: groups.upsert');
-          const payload = events['groups.upsert'];
-          this.groupHandler['groups.upsert'](payload);
-        }
+        if (!settings?.groups_ignore) {
+          if (events['groups.upsert']) {
+            this.logger.verbose('Listening event: groups.upsert');
+            const payload = events['groups.upsert'];
+            this.groupHandler['groups.upsert'](payload);
+          }
 
-        if (events['groups.update']) {
-          this.logger.verbose('Listening event: groups.update');
-          const payload = events['groups.update'];
-          this.groupHandler['groups.update'](payload);
-        }
+          if (events['groups.update']) {
+            this.logger.verbose('Listening event: groups.update');
+            const payload = events['groups.update'];
+            this.groupHandler['groups.update'](payload);
+          }
 
-        if (events['group-participants.update']) {
-          this.logger.verbose('Listening event: group-participants.update');
-          const payload = events['group-participants.update'];
-          this.groupHandler['group-participants.update'](payload);
+          if (events['group-participants.update']) {
+            this.logger.verbose('Listening event: group-participants.update');
+            const payload = events['group-participants.update'];
+            this.groupHandler['group-participants.update'](payload);
+          }
         }
 
         if (events['chats.upsert']) {
@@ -1381,7 +1502,7 @@ export class WAStartupService {
 
   private createJid(number: string): string {
     this.logger.verbose('Creating jid with number: ' + number);
-    
+
     if (number.includes('@g.us') || number.includes('@s.whatsapp.net')) {
       this.logger.verbose('Number already contains @g.us or @s.whatsapp.net');
       return number;
@@ -1391,7 +1512,7 @@ export class WAStartupService {
       this.logger.verbose('Number already contains @broadcast');
       return number;
     }
-    
+
     number = number
       ?.replace(/\s/g, '')
       .replace(/\+/g, '')
@@ -1399,21 +1520,15 @@ export class WAStartupService {
       .replace(/\)/g, '')
       .split(/\:/)[0]
       .split('@')[0];
-    
-    if(number.includes('-') && number.length >= 24){
+
+    if (number.includes('-') && number.length >= 24) {
       this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
       number = number.replace(/[^\d-]/g, '');
       return `${number}@g.us`;
     }
-    
+
     number = number.replace(/\D/g, '');
-    
-    if (number.length >= 18) {
-      this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
-      number = number.replace(/[^\d-]/g, '');
-      return `${number}@g.us`;
-    }
-    
+
     this.logger.verbose('Jid created is whatsapp: ' + `${number}@s.whatsapp.net`);
     return `${number}@s.whatsapp.net`;
   }
@@ -1436,10 +1551,10 @@ export class WAStartupService {
       };
     }
   }
-  
+
   public async getStatus(number: string) {
     const jid = this.createJid(number);
-    
+
     this.logger.verbose('Getting profile status with jid:' + jid);
     try {
       this.logger.verbose('Getting status');
@@ -1455,21 +1570,21 @@ export class WAStartupService {
       };
     }
   }
-  
+
   public async fetchProfile(instanceName: string, number?: string) {
-    const jid = (number)
-      ? this.createJid(number)
-      : this.client?.user?.id;
+    const jid = number ? this.createJid(number) : this.client?.user?.id;
+
     this.logger.verbose('Getting profile with jid: ' + jid);
     try {
       this.logger.verbose('Getting profile info');
+      const info = await waMonitor.instanceInfo(instanceName);
       const business = await this.fetchBusinessProfile(jid);
-      
+
       if (number) {
         const info = (await this.whatsappNumber({ numbers: [jid] }))?.shift();
         const picture = await this.profilePicture(jid);
         const status = await this.getStatus(jid);
-        
+
         return {
           wuid: jid,
           name: info?.name,
@@ -1483,7 +1598,7 @@ export class WAStartupService {
         };
       } else {
         const info = await waMonitor.instanceInfo(instanceName);
-        
+
         return {
           wuid: jid,
           name: info?.instance?.profileName,
@@ -1496,7 +1611,6 @@ export class WAStartupService {
           website: business?.website?.shift(),
         };
       }
-      
     } catch (error) {
       this.logger.verbose('Profile not found');
       return {
@@ -1547,6 +1661,8 @@ export class WAStartupService {
       
       // Link Preview
       let linkPreview = (options?.linkPreview != false) ? undefined : false;
+
+      const linkPreview = options?.linkPreview != false ? undefined : false;
 
       let quoted: WAMessage;
 
@@ -2063,26 +2179,45 @@ export class WAStartupService {
 
   public async audioWhatsapp(data: SendAudioDto) {
     this.logger.verbose('Sending audio whatsapp');
-    const convert = await this.processAudio(data.audioMessage.audio, data.number);
-    if (typeof convert === 'string') {
-      const audio = fs.readFileSync(convert).toString('base64');
-      const result = this.sendMessageWithTyping<AnyMessageContent>(
-        data.number,
-        {
-          audio: Buffer.from(audio, 'base64'),
-          ptt: true,
-          mimetype: 'audio/mp4',
-        },
-        { presence: 'recording', delay: data?.options?.delay },
-      );
 
-      fs.unlinkSync(convert);
-      this.logger.verbose('Converted audio deleted');
-
-      return result;
-    } else {
-      throw new InternalServerErrorException(convert);
+    if (!data.options?.encoding && data.options?.encoding !== false) {
+      data.options.encoding = true;
     }
+
+    if (data.options?.encoding) {
+      const convert = await this.processAudio(data.audioMessage.audio, data.number);
+      if (typeof convert === 'string') {
+        const audio = fs.readFileSync(convert).toString('base64');
+        const result = this.sendMessageWithTyping<AnyMessageContent>(
+          data.number,
+          {
+            audio: Buffer.from(audio, 'base64'),
+            ptt: true,
+            mimetype: 'audio/mp4',
+          },
+          { presence: 'recording', delay: data?.options?.delay },
+        );
+
+        fs.unlinkSync(convert);
+        this.logger.verbose('Converted audio deleted');
+
+        return result;
+      } else {
+        throw new InternalServerErrorException(convert);
+      }
+    }
+
+    return await this.sendMessageWithTyping<AnyMessageContent>(
+      data.number,
+      {
+        audio: isURL(data.audioMessage.audio)
+          ? { url: data.audioMessage.audio }
+          : Buffer.from(data.audioMessage.audio, 'base64'),
+        ptt: true,
+        mimetype: 'audio/ogg; codecs=opus',
+      },
+      { presence: 'recording', delay: data?.options?.delay },
+    );
   }
 
   public async buttonMessage(data: SendButtonDto) {
@@ -2246,7 +2381,7 @@ export class WAStartupService {
     const onWhatsapp: OnWhatsAppDto[] = [];
     for await (const number of data.numbers) {
       let jid = this.createJid(number);
-      
+
       if (isJidGroup(jid)) {
         const group = await this.findGroup({ groupJid: jid }, 'inner');
 
@@ -2254,7 +2389,7 @@ export class WAStartupService {
 
         onWhatsapp.push(new OnWhatsAppDto(group.id, !!group?.id, group?.subject));
       } else {
-        jid = (!jid.startsWith('+')) ? `+${jid}` : jid;
+        jid = !jid.startsWith('+') ? `+${jid}` : jid;
         const verify = await this.client.onWhatsApp(jid);
 
         const result = verify[0];
@@ -2536,30 +2671,28 @@ export class WAStartupService {
     }
   }
 
-  public async fetchBusinessProfile(number: string) : Promise<NumberBusiness> {
+  public async fetchBusinessProfile(number: string): Promise<NumberBusiness> {
     this.logger.verbose('Fetching business profile');
     try {
-      const jid = (number) 
-        ? this.createJid(number)
-        : this.instance.wuid;
+      const jid = number ? this.createJid(number) : this.instance.wuid;
 
       const profile = await this.client.getBusinessProfile(jid);
       this.logger.verbose('Trying to get business profile');
 
       if (!profile) {
         const info = await this.whatsappNumber({ numbers: [jid] });
-        
+
         return {
           isBusiness: false,
           message: 'Not is business profile',
-          ...info?.shift()
+          ...info?.shift(),
         };
       }
 
       this.logger.verbose('Business profile fetched');
       return {
         isBusiness: true,
-        ...profile
+        ...profile,
       };
     } catch (error) {
       throw new InternalServerErrorException(

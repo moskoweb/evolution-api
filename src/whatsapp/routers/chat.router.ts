@@ -134,7 +134,7 @@ export class ChatRouter extends RouterBroker {
         logger.verbose('request received in fetchProfile');
         logger.verbose('request body: ');
         logger.verbose(req.body);
-        
+
         logger.verbose('request query: ');
         logger.verbose(req.query);
 
