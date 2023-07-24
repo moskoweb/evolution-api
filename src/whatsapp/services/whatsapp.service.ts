@@ -1517,13 +1517,19 @@ export class WAStartupService {
       .split(/\:/)[0]
       .split('@')[0];
 
-    if (number.length >= 18) {
+    if(number.includes('-') && number.length >= 24){
       this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
       number = number.replace(/[^\d-]/g, '');
       return `${number}@g.us`;
     }
 
     number = number.replace(/\D/g, '');
+
+    if (number.length >= 18) {
+      this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
+      number = number.replace(/[^\d-]/g, '');
+      return `${number}@g.us`;
+    }
 
     this.logger.verbose('Jid created is whatsapp: ' + `${number}@s.whatsapp.net`);
     return `${number}@s.whatsapp.net`;
@@ -1657,8 +1663,6 @@ export class WAStartupService {
       }
       
       // Link Preview
-      const linkPreview = options?.linkPreview != false ? undefined : false;
-
       const linkPreview = options?.linkPreview != false ? undefined : false;
 
       let quoted: WAMessage;
