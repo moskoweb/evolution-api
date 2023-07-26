@@ -22,7 +22,7 @@ docker-compose.yaml
 /yarn.lock
 /package-lock.json
 
-# IDE - VSCode
+# IDEs
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -43,3 +43,4 @@ docker-compose.yaml
 /temp/*
 
 .DS_Store
+*.DS_Store
