@@ -13,6 +13,7 @@ import { SendAudioDto } from '../dto/sendMessage.dto';
 import { SendMediaDto } from '../dto/sendMessage.dto';
 import { ROOT_DIR } from '../../config/path.config';
 import { ConfigService, HttpServer } from '../../config/env.config';
+import { type } from 'os';
 
 export class ChatwootService {
   private messageCacheFile: string;
@@ -230,12 +231,18 @@ export class ChatwootService {
 
     if (qrcode) {
       this.logger.verbose('create conversation in chatwoot');
+      const data = {
+        contact_id: contactId.toString(),
+        inbox_id: inboxId.toString(),
+      };
+
+      if (this.provider.conversation_pending) {
+        data['status'] = 'pending';
+      }
+
       const conversation = await client.conversations.create({
         accountId: this.provider.account_id,
-        data: {
-          contact_id: contactId.toString(),
-          inbox_id: inboxId.toString(),
-        },
+        data,
       });
 
       if (!conversation) {
@@ -520,11 +527,20 @@ export class ChatwootService {
       })) as any;
 
       if (contactConversations) {
+        let conversation: any;
+        if (this.provider.reopen_conversation) {
+          conversation = contactConversations.payload.find(
+            (conversation) => conversation.inbox_id == filterInbox.id,
+          );
+        } else {
+          conversation = contactConversations.payload.find(
+            (conversation) =>
+              conversation.status !== 'resolved' &&
+              conversation.inbox_id == filterInbox.id,
+          );
+        }
         this.logger.verbose('return conversation if exists');
-        const conversation = contactConversations.payload.find(
-          (conversation) =>
-            conversation.status !== 'resolved' && conversation.inbox_id == filterInbox.id,
-        );
+
         if (conversation) {
           this.logger.verbose('conversation found');
           return conversation.id;
@@ -532,12 +548,18 @@ export class ChatwootService {
       }
 
       this.logger.verbose('create conversation in chatwoot');
+      const data = {
+        contact_id: contactId.toString(),
+        inbox_id: filterInbox.id.toString(),
+      };
+
+      if (this.provider.conversation_pending) {
+        data['status'] = 'pending';
+      }
+
       const conversation = await client.conversations.create({
         accountId: this.provider.account_id,
-        data: {
-          contact_id: `${contactId}`,
-          inbox_id: `${filterInbox.id}`,
-        },
+        data,
       });
 
       if (!conversation) {
@@ -1125,12 +1147,12 @@ export class ChatwootService {
       }
 
       if (body.message_type === 'template' && body.event === 'message_created') {
-        this.logger.verbose('check if is csat');
+        this.logger.verbose('check if is template');
 
         const data: SendTextDto = {
           number: chatId,
           textMessage: {
-            text: body.content,
+            text: body.content.replace(/\\\r\n|\\\n|\n/g, '\n'),
           },
           options: {
             delay: 1200,
@@ -1179,13 +1201,15 @@ export class ChatwootService {
       videoMessage: msg.videoMessage?.caption,
       extendedTextMessage: msg.extendedTextMessage?.text,
       messageContextInfo: msg.messageContextInfo?.stanzaId,
-      stickerMessage: msg.stickerMessage?.fileSha256.toString('base64'),
+      stickerMessage: undefined,
       documentMessage: msg.documentMessage?.caption,
       documentWithCaptionMessage:
         msg.documentWithCaptionMessage?.message?.documentMessage?.caption,
       audioMessage: msg.audioMessage?.caption,
       contactMessage: msg.contactMessage?.vcard,
       contactsArrayMessage: msg.contactsArrayMessage,
+      locationMessage: msg.locationMessage,
+      liveLocationMessage: msg.liveLocationMessage,
     };
 
     this.logger.verbose('type message: ' + types);
@@ -1199,8 +1223,19 @@ export class ChatwootService {
 
     const result = typeKey ? types[typeKey] : undefined;
 
-    if (typeKey === 'stickerMessage') {
-      return null;
+    if (typeKey === 'locationMessage' || typeKey === 'liveLocationMessage') {
+      const latitude = result.degreesLatitude;
+      const longitude = result.degreesLongitude;
+
+      const formattedLocation = `**Location:**
+        **latitude:** ${latitude}
+        **longitude:** ${longitude}
+        https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}
+        `;
+
+      this.logger.verbose('message content: ' + formattedLocation);
+
+      return formattedLocation;
     }
 
     if (typeKey === 'contactMessage') {

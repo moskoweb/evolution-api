@@ -116,16 +116,15 @@ import { useMultiFileAuthStateDb } from '../../utils/use-multi-file-auth-state-d
 import Long from 'long';
 import { WebhookRaw } from '../models/webhook.model';
 import { ChatwootRaw } from '../models/chatwoot.model';
+import { SettingsRaw } from '../models';
 import { dbserver } from '../../db/db.connect';
 import NodeCache from 'node-cache';
 import { useMultiFileAuthStateRedisDb } from '../../utils/use-multi-file-auth-state-redis-db';
 import sharp from 'sharp';
 import { RedisCache } from '../../db/redis.client';
 import { Log } from '../../config/env.config';
-import ProxyAgent from 'proxy-agent';
 import { ChatwootService } from './chatwoot.service';
 import { waMonitor } from '../whatsapp.module';
-import { SettingsRaw } from '../models';
 
 export class WAStartupService {
   constructor(
@@ -243,13 +242,9 @@ export class WAStartupService {
 
   public get qrCode(): wa.QrCode {
     this.logger.verbose('Getting qrcode');
-    if (this.instance.qrcode?.pairingCode) {
-      return {
-        pairingCode: this.instance.qrcode?.pairingCode,
-      };
-    }
 
     return {
+      pairingCode: this.instance.qrcode?.pairingCode,
       code: this.instance.qrcode?.code,
       base64: this.instance.qrcode?.base64,
     };
@@ -317,6 +312,19 @@ export class WAStartupService {
     this.localChatwoot.sign_msg = data?.sign_msg;
     this.logger.verbose(`Chatwoot sign msg: ${this.localChatwoot.sign_msg}`);
 
+    this.localChatwoot.number = data?.number;
+    this.logger.verbose(`Chatwoot number: ${this.localChatwoot.number}`);
+
+    this.localChatwoot.reopen_conversation = data?.reopen_conversation;
+    this.logger.verbose(
+      `Chatwoot reopen conversation: ${this.localChatwoot.reopen_conversation}`,
+    );
+
+    this.localChatwoot.conversation_pending = data?.conversation_pending;
+    this.logger.verbose(
+      `Chatwoot conversation pending: ${this.localChatwoot.conversation_pending}`,
+    );
+
     this.logger.verbose('Chatwoot loaded');
   }
 
@@ -328,6 +336,8 @@ export class WAStartupService {
     this.logger.verbose(`Chatwoot url: ${data.url}`);
     this.logger.verbose(`Chatwoot inbox name: ${data.name_inbox}`);
     this.logger.verbose(`Chatwoot sign msg: ${data.sign_msg}`);
+    this.logger.verbose(`Chatwoot reopen conversation: ${data.reopen_conversation}`);
+    this.logger.verbose(`Chatwoot conversation pending: ${data.conversation_pending}`);
 
     Object.assign(this.localChatwoot, data);
     this.logger.verbose('Chatwoot set');
@@ -347,6 +357,8 @@ export class WAStartupService {
     this.logger.verbose(`Chatwoot url: ${data.url}`);
     this.logger.verbose(`Chatwoot inbox name: ${data.name_inbox}`);
     this.logger.verbose(`Chatwoot sign msg: ${data.sign_msg}`);
+    this.logger.verbose(`Chatwoot reopen conversation: ${data.reopen_conversation}`);
+    this.logger.verbose(`Chatwoot conversation pending: ${data.conversation_pending}`);
 
     return data;
   }
@@ -363,6 +375,15 @@ export class WAStartupService {
     this.localSettings.groups_ignore = data?.groups_ignore;
     this.logger.verbose(`Settings groups_ignore: ${this.localSettings.groups_ignore}`);
 
+    this.localSettings.always_online = data?.always_online;
+    this.logger.verbose(`Settings always_online: ${this.localSettings.always_online}`);
+
+    this.localSettings.read_messages = data?.read_messages;
+    this.logger.verbose(`Settings read_messages: ${this.localSettings.read_messages}`);
+
+    this.localSettings.read_status = data?.read_status;
+    this.logger.verbose(`Settings read_status: ${this.localSettings.read_status}`);
+
     this.logger.verbose('Settings loaded');
   }
 
@@ -372,8 +393,13 @@ export class WAStartupService {
     this.logger.verbose(`Settings reject_call: ${data.reject_call}`);
     this.logger.verbose(`Settings msg_call: ${data.msg_call}`);
     this.logger.verbose(`Settings groups_ignore: ${data.groups_ignore}`);
+    this.logger.verbose(`Settings always_online: ${data.always_online}`);
+    this.logger.verbose(`Settings read_messages: ${data.read_messages}`);
+    this.logger.verbose(`Settings read_status: ${data.read_status}`);
     Object.assign(this.localSettings, data);
     this.logger.verbose('Settings set');
+
+    this.client?.ws?.close();
   }
 
   public async findSettings() {
@@ -382,12 +408,15 @@ export class WAStartupService {
 
     if (!data) {
       this.logger.verbose('Settings not found');
-      throw new NotFoundException('Settings not found');
+      return null;
     }
 
     this.logger.verbose(`Settings url: ${data.reject_call}`);
     this.logger.verbose(`Settings msg_call: ${data.msg_call}`);
     this.logger.verbose(`Settings groups_ignore: ${data.groups_ignore}`);
+    this.logger.verbose(`Settings always_online: ${data.always_online}`);
+    this.logger.verbose(`Settings read_messages: ${data.read_messages}`);
+    this.logger.verbose(`Settings read_status: ${data.read_status}`);
     return data;
   }
 
@@ -606,7 +635,6 @@ export class WAStartupService {
         color: { light: '#ffffff', dark: '#198754' },
       };
 
-      console.log(this.phoneNumber);
       if (this.phoneNumber) {
         await delay(2000);
         this.instance.qrcode.pairingCode = await this.client.requestPairingCode(
@@ -848,6 +876,7 @@ export class WAStartupService {
         printQRInTerminal: false,
         browser,
         version,
+        markOnlineOnConnect: this.localSettings.always_online,
         connectTimeoutMs: 60_000,
         qrTimeout: 40_000,
         defaultQueryTimeoutMs: undefined,
@@ -1118,7 +1147,7 @@ export class WAStartupService {
 
       if (
         type !== 'notify' ||
-        // received.message?.protocolMessage ||
+        received.message?.protocolMessage ||
         received.message?.pollUpdateMessage
       ) {
         this.logger.verbose('message rejected');
@@ -1129,7 +1158,7 @@ export class WAStartupService {
         received.messageTimestamp = received.messageTimestamp?.toNumber();
       }
 
-      if (settings.groups_ignore && received.key.remoteJid.includes('@g.us')) {
+      if (settings?.groups_ignore && received.key.remoteJid.includes('@g.us')) {
         this.logger.verbose('group ignored');
         return;
       }
@@ -1143,6 +1172,14 @@ export class WAStartupService {
         owner: this.instance.name,
         source: getDevice(received.key.id),
       };
+
+      if (this.localSettings.read_messages && received.key.id !== 'status@broadcast') {
+        await this.client.readMessages([received.key]);
+      }
+
+      if (this.localSettings.read_status && received.key.id === 'status@broadcast') {
+        await this.client.readMessages([received.key]);
+      }
 
       this.logger.log(messageRaw);
 
@@ -1240,7 +1277,7 @@ export class WAStartupService {
         5: 'PLAYED',
       };
       for await (const { key, update } of args) {
-        if (settings.groups_ignore && key.remoteJid.includes('@g.us')) {
+        if (settings?.groups_ignore && key.remoteJid.includes('@g.us')) {
           this.logger.verbose('group ignored');
           return;
         }
@@ -1363,11 +1400,15 @@ export class WAStartupService {
               text: settings.msg_call,
             });
 
+            this.logger.verbose('Sending data to event messages.upsert');
             this.client.ev.emit('messages.upsert', {
               messages: [msg],
               type: 'notify',
             });
           }
+
+          this.logger.verbose('Sending data to webhook in event CALL');
+          this.sendDataWebhook(Events.CALL, call);
         }
 
         if (events['connection.update']) {
@@ -1503,7 +1544,7 @@ export class WAStartupService {
       this.logger.verbose('Number already contains @g.us or @s.whatsapp.net');
       return number;
     }
-  
+
     if (number.includes('@broadcast')) {
       this.logger.verbose('Number already contains @broadcast');
       return number;
@@ -1517,7 +1558,7 @@ export class WAStartupService {
       .split(/\:/)[0]
       .split('@')[0];
 
-    if(number.includes('-') && number.length >= 24){
+    if (number.includes('-') && number.length >= 24) {
       this.logger.verbose('Jid created is group: ' + `${number}@g.us`);
       number = number.replace(/[^\d-]/g, '');
       return `${number}@g.us`;
@@ -1534,7 +1575,6 @@ export class WAStartupService {
     this.logger.verbose('Jid created is whatsapp: ' + `${number}@s.whatsapp.net`);
     return `${number}@s.whatsapp.net`;
   }
-
 
   public async profilePicture(number: string) {
     const jid = this.createJid(number);
@@ -1591,7 +1631,7 @@ export class WAStartupService {
         return {
           wuid: jid,
           name: info?.name,
-          numberExists: info?.exists || false,
+          numberExists: info?.exists,
           picture: picture?.profilePictureUrl,
           status: status?.status,
           isBusiness: business.isBusiness,
@@ -1661,8 +1701,7 @@ export class WAStartupService {
         await this.client.sendPresenceUpdate('paused', sender);
         this.logger.verbose('Sending presence update: paused');
       }
-      
-      // Link Preview
+
       const linkPreview = options?.linkPreview != false ? undefined : false;
 
       let quoted: WAMessage;
@@ -1693,14 +1732,14 @@ export class WAStartupService {
 
           if (options?.mentions) {
             this.logger.verbose('Mentions defined');
-            
+
             if (options.mentions?.everyOne) {
               this.logger.verbose('Mentions everyone');
 
               this.logger.verbose('Getting group metadata');
               mentions = groupMetadata.participants.map((participant) => participant.id);
               this.logger.verbose('Getting group metadata for mentions');
-            } else if(options.mentions?.mentioned?.length) {
+            } else if (options.mentions?.mentioned?.length) {
               this.logger.verbose('Mentions manually defined');
               mentions = options.mentions.mentioned.map((mention) => {
                 const jid = this.createJid(mention);
@@ -2403,7 +2442,7 @@ export class WAStartupService {
     this.logger.verbose('Marking message as read');
     try {
       const keys: proto.IMessageKey[] = [];
-      data.readMessages.forEach((read) => {
+      data.read_messages.forEach((read) => {
         if (isJidGroup(read.remoteJid) || isJidUser(read.remoteJid)) {
           keys.push({
             remoteJid: read.remoteJid,
@@ -2643,7 +2682,6 @@ export class WAStartupService {
       await this.client.updateGroupsAddPrivacy(settings.privacySettings.groupadd);
       this.logger.verbose('Groups add privacy updated');
 
-      // reinicia a instancia
       this.client?.ws?.close();
 
       return {
@@ -2782,13 +2820,13 @@ export class WAStartupService {
         this.logger.verbose('Updating group description: ' + create.description);
         await this.client.groupUpdateDescription(id, create.description);
       }
-      
+
       if (create?.promoteParticipants) {
         this.logger.verbose('Prometing group participants: ' + create.description);
         await this.updateGParticipant({
           groupJid: id,
-          action: "promote",
-          participants: participants
+          action: 'promote',
+          participants: participants,
         });
       }
 
