@@ -2388,7 +2388,6 @@ export class WAStartupService {
       if (!last_message || Object.keys(last_message).length === 0) {
         throw new NotFoundException('Last message not found');
       }
-      console.log(last_message);
 
       await this.client.chatModify(
         {
