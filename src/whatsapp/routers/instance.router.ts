@@ -2,7 +2,7 @@ import { RequestHandler, Router } from 'express';
 
 import { Auth, ConfigService, Database } from '../../config/env.config';
 import { Logger } from '../../config/logger.config';
-import { dbserver } from '../../db/db.connect';
+import { dbserver } from '../../libs/db.connect';
 import { instanceNameSchema, oldTokenSchema } from '../../validate/validate.schema';
 import { RouterBroker } from '../abstract/abstract.router';
 import { InstanceDto } from '../dto/instance.dto';
@@ -161,7 +161,9 @@ export class InstanceRouter extends RouterBroker {
       if (db.ENABLED) {
         try {
           await dbserver.dropDatabase();
-          return res.status(HttpStatus.CREATED).json({ error: false, message: 'Database deleted' });
+          return res
+            .status(HttpStatus.CREATED)
+            .json({ status: 'SUCCESS', error: false, response: { message: 'database deleted' } });
         } catch (error) {
           return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: true, message: error.message });
         }
