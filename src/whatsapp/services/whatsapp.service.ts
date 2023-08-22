@@ -696,8 +696,7 @@ export class WAStartupService {
         }
 
         try {
-          if (this.localWebhook.enabled && isURL(this.localWebhook.url)) {
-            const httpService = axios.create({ baseURL });
+          if (this.localWebhook.enabled && isURL(baseURL)) {
             const postData = {
               event,
               instance: this.instance.name,
@@ -712,7 +711,7 @@ export class WAStartupService {
               postData['apikey'] = instanceApikey;
             }
 
-            await httpService.post('', postData);
+            await axios.post(baseURL, postData);
           }
         } catch (error) {
           this.logger.error({
@@ -768,7 +767,6 @@ export class WAStartupService {
 
         try {
           if (globalWebhook && globalWebhook?.ENABLED && isURL(globalURL)) {
-            const httpService = axios.create({ baseURL: globalURL });
             const postData = {
               event,
               instance: this.instance.name,
@@ -783,7 +781,7 @@ export class WAStartupService {
               postData['apikey'] = globalApiKey;
             }
 
-            await httpService.post('', postData);
+            await axios.post(globalURL, postData);
           }
         } catch (error) {
           this.logger.error({
